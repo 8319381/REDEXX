@@ -1,0 +1,501 @@
+import React, { useState, useEffect , useCallback} from 'react';
+import {
+  Container,
+  Paper,
+  TextField,
+  Button,
+  Typography,
+  Box,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Collapse,
+  IconButton,
+  Grid,
+} from '@mui/material';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
+
+const BetRow = ({ bet, myCounterBids, onCreateCounterBid }) => {
+  const [open, setOpen] = useState(false);
+  const hasCounterBids = myCounterBids && myCounterBids.length > 0;
+
+  return (
+    <>
+      <TableRow
+        sx={{
+          '& > *': { borderBottom: 'unset' },
+          backgroundColor: hasCounterBids ? 'rgba(25, 118, 210, 0.04)' : 'inherit'
+        }}
+      >
+        <TableCell>
+          {hasCounterBids && (
+            <IconButton
+              aria-label="expand row"
+              size="small"
+              onClick={() => setOpen(!open)}
+            >
+              {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+            </IconButton>
+          )}
+        </TableCell>
+        <TableCell>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Typography variant="body1" component="span">
+              {bet.route}
+            </Typography>
+            {hasCounterBids && (
+              <Typography
+                variant="caption"
+                color="primary"
+                sx={{ ml: 1 }}
+              >
+                (Ваши предложения: {myCounterBids.length})
+              </Typography>
+            )}
+          </Box>
+        </TableCell>
+        <TableCell>Ж/Д</TableCell>
+        <TableCell>{bet.cost}</TableCell>
+        <TableCell>{bet.deliveryDays}</TableCell>
+        <TableCell>{fmtDate(bet)}</TableCell>
+        <TableCell>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => onCreateCounterBid(bet)}
+          >
+            {hasCounterBids ? 'Новое предложение' : 'Встречное предложение'}
+          </Button>
+        </TableCell>
+      </TableRow>
+      {hasCounterBids && (
+        <TableRow>
+          <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={7}>
+            <Collapse in={open} timeout="auto" unmountOnExit>
+              <Box sx={{
+                margin: 1,
+                ml: 4,
+                borderLeft: '2px solid #1976d2',
+                pl: 2
+              }}>
+                <Typography
+                  variant="subtitle2"
+                  gutterBottom
+                  component="div"
+                  color="primary"
+                  sx={{ mb: 2 }}
+                >
+                  Ваши предложения по маршруту {bet.route}
+                </Typography>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ color: 'text.secondary' }}>
+                        Предложенная стоимость
+                        {bet.cost > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                            (исходная: {bet.cost} руб.)
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ color: 'text.secondary' }}>
+                        Срок доставки
+                        {bet.deliveryDays > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                            (исходный: {bet.deliveryDays} дн.)
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ color: 'text.secondary' }}>Дата предложения</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {myCounterBids.map((counterBid) => (
+                      <TableRow
+                        key={counterBid.id}
+                        sx={{
+                          backgroundColor: 'rgba(25, 118, 210, 0.02)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                          },
+                        }}
+                      >
+                        <TableCell>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            {counterBid.cost} руб.
+                            {counterBid.cost !== bet.cost && (
+                              <Typography
+                                variant="caption"
+                                color={counterBid.cost < bet.cost ? "success.main" : "error.main"}
+                                sx={{ ml: 1 }}
+                              >
+                                ({counterBid.cost < bet.cost ? '-' : '+'}
+                                {Math.abs(counterBid.cost - bet.cost)} руб.)
+                              </Typography>
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            {counterBid.deliveryDays} дн.
+                            {counterBid.deliveryDays !== bet.deliveryDays && (
+                              <Typography
+                                variant="caption"
+                                color={counterBid.deliveryDays < bet.deliveryDays ? "success.main" : "error.main"}
+                                sx={{ ml: 1 }}
+                              >
+                                ({counterBid.deliveryDays < bet.deliveryDays ? '-' : '+'}
+                                {Math.abs(counterBid.deliveryDays - bet.deliveryDays)} дн.)
+                              </Typography>
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          {fmtDate(counterBid)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            </Collapse>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+};
+
+const fmtDate = (obj) => {
+  const raw = obj && (obj.createdAt || obj.created_at);
+  if (!raw) return "";
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("ru-RU");
+};
+
+const BuyerDashboard = () => {
+  const { logout } = useAuth();
+  const [routes, setRoutes] = useState([]);
+  const [bets, setBets] = useState([]);
+  const [selectedRoute, setSelectedRoute] = useState('');
+  const [filteredBets, setFilteredBets] = useState([]);
+  const [error, setError] = useState('');
+  const [isCounterBidOpen, setIsCounterBidOpen] = useState(false);
+  const [selectedBet, setSelectedBet] = useState(null);
+  const [counterBidCost, setCounterBidCost] = useState('');
+  const [counterBidDays, setCounterBidDays] = useState('');
+  
+  // Route search functionality
+  const [fromLocation, setFromLocation] = useState('');
+  const [toLocation, setToLocation] = useState('');
+  const [containerType, setContainerType] = useState('');
+  const [departureDate, setDepartureDate] = useState(null);
+  const [containerTypes, setContainerTypes] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [showRouteSearch, setShowRouteSearch] = useState(false);
+  
+  // Helper function to get unique cities from routes
+  const extractCities = (routesData) => {
+    const uniqueCities = new Set();
+    routesData.forEach(route => {
+      uniqueCities.add(route.from);
+      uniqueCities.add(route.to);
+    });
+    return Array.from(uniqueCities).sort();
+  };
+
+
+  useEffect(() => {
+    if (selectedRoute) {
+      setFilteredBets(bets.filter((bet) => bet.route === selectedRoute));
+    } else {
+      setFilteredBets(bets);
+    }
+  }, [selectedRoute, bets]);
+
+  const fetchRoutes = useCallback(async () => {
+    try {
+      // Fetch routes
+      const routesResponse = await axios.get('/api/routes');
+      setRoutes(routesResponse.data);
+      
+      // Extract and set cities from routes
+      const citiesList = extractCities(routesResponse.data);
+      setCities(citiesList);
+      
+      // Fetch container types
+      const containerTypesResponse = await axios.get('/api/container-types');
+      setContainerTypes(containerTypesResponse.data);
+      if (containerTypesResponse.data.length > 0) {
+        setContainerType(containerTypesResponse.data[0]);
+      }
+    } catch (error) {
+      setError('Error fetching routes and container types');
+    }
+}, []);
+
+  useEffect(() => {
+    fetchRoutes();
+  }, [fetchRoutes]);
+
+
+
+  const fetchBets = async () => {
+    try {
+      const response = await axios.get('/api/bets');
+      // Group counter bids with their original bets
+      const logisticianBets = response.data.filter(bet => !bet.isCounterBid);
+      logisticianBets.forEach(bet => {
+        bet.myCounterBids = response.data.filter(
+          counterBid => counterBid.isCounterBid && counterBid.originalBetId === bet.id
+        );
+      });
+      setBets(logisticianBets);
+    } catch (error) {
+      setError('Ошибка при загрузке ставок');
+    }
+  };
+
+  const handleOpenCounterBid = (bet) => {
+    setSelectedBet(bet);
+    setCounterBidCost(bet.cost.toString());
+    setCounterBidDays(bet.deliveryDays.toString());
+    setIsCounterBidOpen(true);
+  };
+
+  const handleCloseCounterBid = () => {
+    setIsCounterBidOpen(false);
+    setSelectedBet(null);
+    setCounterBidCost('');
+    setCounterBidDays('');
+  };
+
+  const handleSubmitCounterBid = async () => {
+    try {
+      await axios.post('/api/bets', {
+        route: selectedBet.route,
+        transportType: 'train',
+        cost: parseFloat(counterBidCost),
+        deliveryDays: parseInt(counterBidDays),
+        isCounterBid: true,
+        originalBetId: selectedBet.id
+      });
+      handleCloseCounterBid();
+      fetchBets();
+    } catch (error) {
+      setError('Ошибка при создании встречной ставки');
+    }
+  };
+
+  return (
+    <Container>
+      <Box sx={{ mt: 4, mb: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Панель покупателя
+        </Typography>
+        <Button
+          variant="outlined"
+          color="secondary"
+          onClick={logout}
+          sx={{ position: 'absolute', top: 20, right: 20 }}
+        >
+          Выйти
+        </Button>
+      </Box>
+
+      <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Поиск маршрутов</Typography>
+          <Button 
+            variant="outlined" 
+            onClick={() => setShowRouteSearch(!showRouteSearch)}
+            size="small"
+          >
+            {showRouteSearch ? 'Скрыть' : 'Показать'}
+          </Button>
+        </Box>
+        
+        <Collapse in={showRouteSearch}>
+          <Grid container spacing={3} sx={{ mb: 3 }}>
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Место отправки</InputLabel>
+                <Select
+                  value={fromLocation}
+                  label="Место отправки"
+                  onChange={(e) => setFromLocation(e.target.value)}
+                >
+                  <MenuItem value="">Выберите город</MenuItem>
+                  {cities.map((city) => (
+                    <MenuItem key={`from-${city}`} value={city}>{city}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Место доставки</InputLabel>
+                <Select
+                  value={toLocation}
+                  label="Место доставки"
+                  onChange={(e) => setToLocation(e.target.value)}
+                >
+                  <MenuItem value="">Выберите город</MenuItem>
+                  {cities.map((city) => (
+                    <MenuItem key={`to-${city}`} value={city}>{city}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Оборудование</InputLabel>
+                <Select
+                  value={containerType}
+                  label="Оборудование"
+                  onChange={(e) => setContainerType(e.target.value)}
+                >
+                  <MenuItem value="">Все типы</MenuItem>
+                  {containerTypes.map((type) => (
+                    <MenuItem key={type} value={type}>{type}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <TextField
+                label="Дата выхода"
+                type="date"
+                value={departureDate || ''}
+                onChange={(e) => setDepartureDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Button 
+                variant="contained" 
+                color="primary" 
+                onClick={() => {
+                  // Create route string from selections
+                  if (fromLocation && toLocation) {
+                    setSelectedRoute(`${fromLocation} – ${toLocation}`);
+                  }
+                }}
+                fullWidth
+              >
+                Найти маршруты
+              </Button>
+            </Grid>
+          </Grid>
+        </Collapse>
+      </Paper>
+      
+      <Paper elevation={3} sx={{ p: 3 }}>
+        <Box sx={{ mb: 3 }}>
+          <FormControl fullWidth>
+            <InputLabel>Фильтр по маршруту</InputLabel>
+            <Select
+              value={selectedRoute}
+              label="Фильтр по маршруту"
+              onChange={(e) => setSelectedRoute(e.target.value)}
+            >
+              <MenuItem value="">Все маршруты</MenuItem>
+              {routes.map((route, index) => (
+                <MenuItem key={index} value={`${route.from} – ${route.to}`}>
+                  {route.from} – {route.to}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+
+        {error && (
+          <Typography color="error" sx={{ mb: 2 }}>
+            {error}
+          </Typography>
+        )}
+
+        <Typography variant="h6" gutterBottom>
+          Доступные ставки
+        </Typography>
+        <TableContainer>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell />
+                <TableCell>Маршрут</TableCell>
+                <TableCell>Тип транспорта</TableCell>
+                <TableCell>Стоимость (руб.)</TableCell>
+                <TableCell>Срок доставки (дней)</TableCell>
+                <TableCell>Дата создания</TableCell>
+                <TableCell>Действия</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredBets.map((bet) => (
+                <BetRow
+                  key={bet.id}
+                  bet={bet}
+                  myCounterBids={bet.myCounterBids}
+                  onCreateCounterBid={handleOpenCounterBid}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <Dialog open={isCounterBidOpen} onClose={handleCloseCounterBid}>
+        <DialogTitle>Создать встречное предложение</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Typography variant="body2" gutterBottom>
+              Маршрут: {selectedBet?.route}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" gutterBottom>
+              Исходное предложение: {selectedBet?.cost} руб., {selectedBet?.deliveryDays} дн.
+            </Typography>
+            <TextField
+              fullWidth
+              label="Стоимость (руб.)"
+              type="number"
+              value={counterBidCost}
+              onChange={(e) => setCounterBidCost(e.target.value)}
+              sx={{ mb: 2, mt: 2 }}
+            />
+            <TextField
+              fullWidth
+              label="Срок доставки (дней)"
+              type="number"
+              value={counterBidDays}
+              onChange={(e) => setCounterBidDays(e.target.value)}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseCounterBid}>Отмена</Button>
+          <Button onClick={handleSubmitCounterBid} variant="contained">
+            Создать предложение
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Container>
+  );
+};
+
+export default BuyerDashboard;
