@@ -1,0 +1,13 @@
+                                                                   Table "public.users"
+    Column     |           Type           | Collation | Nullable |              Default              | Storage  | Compression | Stats target | Description 
+---------------+--------------------------+-----------+----------+-----------------------------------+----------+-------------+--------------+-------------
+ id            | bigint                   |           | not null | nextval('users_id_seq'::regclass) | plain    |             |              | 
+ email         | text                     |           | not null |                                   | extended |             |              | 
+ password_hash | text                     |           | not null |                                   | extended |             |              | 
+ role          | text                     |           | not null |                                   | extended |             |              | 
+ created_at    | timestamp with time zone |           | not null | now()                             | plain    |             |              | 
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (id)
+    "users_email_key" UNIQUE CONSTRAINT, btree (email)
+Access method: heap
+

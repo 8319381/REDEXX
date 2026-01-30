@@ -1,0 +1,240 @@
+require('dotenv').config();
+
+const express = require('express');
+const cors = require('cors');
+const db = require('./db');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is not set in .env");
+  process.exit(1);
+}
+
+app.use(cors());
+app.use(express.json());
+
+// Static lists (ok to keep in code)
+const routes = [
+  { from: 'Москва', to: 'Шанхай' },
+  { from: 'Москва', to: 'Пекин' },
+  { from: 'Москва', to: 'Нингбо' },
+  { from: 'Москва', to: 'Циндао' },
+  { from: 'Москва', to: 'Яньтянь' },
+  { from: 'Санкт-Петербург', to: 'Шанхай' },
+  { from: 'Санкт-Петербург', to: 'Пекин' },
+  { from: 'Санкт-Петербург', to: 'Нингбо' },
+  { from: 'Екатеринбург', to: 'Шанхай' },
+  { from: 'Екатеринбург', to: 'Гуанчжоу' }
+];
+const containerTypes = ["20'", "20' Heavy", "40'", "40' HC"];
+
+// Auth middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+
+const requireRole = (role) => {
+  const r = String(role || '').trim();
+  if (!['buyer', 'logistician'].includes(r)) return null;
+  return r;
+};
+
+// Healthcheck (по желанию)
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.query('select 1');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: 'db error' });
+  }
+});
+
+// AUTH: register
+app.post('/api/register', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || '');
+    const role = requireRole(req.body.role);
+
+    if (!email || !password || !role) {
+      return res.status(400).json({ message: 'Invalid payload' });
+    }
+
+    const exists = await db.query('select 1 from users where email=$1', [email]);
+    if (exists.rowCount > 0) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    const ins = await db.query(
+      'insert into users(email, password_hash, role) values ($1,$2,$3) returning id,email,role',
+      [email, password_hash, role]
+    );
+
+    const user = ins.rows[0];
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET
+    );
+
+    res.json({ token, user });
+  } catch (error) {
+    console.error('REGISTER ERROR', error);
+    res.status(500).json({ message: 'Error creating user' });
+  }
+});
+
+// AUTH: login
+app.post('/api/login', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || '');
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Invalid payload' });
+    }
+
+    const q = await db.query(
+      'select id,email,password_hash,role from users where email=$1',
+      [email]
+    );
+
+    if (q.rowCount === 0) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const u = q.rows[0];
+    const ok = await bcrypt.compare(password, u.password_hash);
+    if (!ok) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: u.id, email: u.email, role: u.role },
+      process.env.JWT_SECRET
+    );
+
+    res.json({ token, user: { id: u.id, email: u.email, role: u.role } });
+  } catch (error) {
+    console.error('LOGIN ERROR', error);
+    res.status(500).json({ message: 'Error logging in' });
+  }
+});
+
+// BETS: create
+app.post('/api/bets', authenticateToken, async (req, res) => {
+  try {
+    const {
+      route,
+      transportType,
+      cost,
+      deliveryDays,
+      isCounterBid,
+      originalBetId
+    } = req.body || {};
+
+    const bet = {
+      id: crypto.randomUUID(),
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      route,
+      transportType,
+      cost,
+      deliveryDays,
+      isCounterBid: !!isCounterBid,
+      originalBetId: originalBetId || null,
+      createdAt: new Date().toISOString()
+    };
+
+    await db.query(
+      'insert into bets(bet_id, data) values ($1, $2::jsonb)',
+      [bet.id, JSON.stringify(bet)]
+    );
+
+    res.json(bet);
+  } catch (error) {
+    console.error('CREATE BET ERROR', error);
+    res.status(500).json({ message: 'Error creating bet' });
+  }
+});
+
+// BETS: list (с фильтрацией как раньше)
+app.get('/api/bets', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+
+    let sql;
+    let params;
+
+    if (req.user.role === 'logistician') {
+      // свои ставки И контр-ставки к своим ставкам
+      sql = `
+        select bet_id, data, created_at
+        from bets
+        where (data->>'userId') = $1
+           or (
+             coalesce((data->>'isCounterBid')::boolean,false) = true
+             and exists (
+               select 1 from bets b2
+               where b2.bet_id = (data->>'originalBetId')
+                 and (b2.data->>'userId') = $1
+             )
+           )
+        order by created_at asc
+      `;
+      params = [userId];
+    } else {
+      // buyer: все ставки логистов + свои контр-ставки
+      sql = `
+        select bet_id, data, created_at
+        from bets
+        where (data->>'userRole') = 'logistician'
+           or (
+             coalesce((data->>'isCounterBid')::boolean,false) = true
+             and (data->>'userId') = $1
+           )
+        order by created_at asc
+      `;
+      params = [userId];
+    }
+
+    const q = await db.query(sql, params);
+
+    const list = q.rows.map(r => {
+      const d = r.data || {};
+      // унификация: id = bet_id
+      return { ...d, id: r.bet_id, createdAt: r.created_at };
+    });
+
+    res.json(list);
+  } catch (error) {
+    console.error('LIST BETS ERROR', error);
+    res.status(500).json({ message: 'Error fetching bets' });
+  }
+});
+
+// Available routes and container types
+app.get('/api/routes', (req, res) => res.json(routes));
+app.get('/api/container-types', (req, res) => res.json(containerTypes));
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});

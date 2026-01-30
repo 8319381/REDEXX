@@ -1,0 +1,11 @@
+                                                     Table "public.bets"
+   Column   |           Type           | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ bet_id     | text                     |           | not null |         | extended |             |              | 
+ data       | jsonb                    |           | not null |         | extended |             |              | 
+ created_at | timestamp with time zone |           | not null | now()   | plain    |             |              | 
+Indexes:
+    "bets_pkey" PRIMARY KEY, btree (bet_id)
+    "bets_created_at_idx" btree (created_at DESC)
+Access method: heap
+
