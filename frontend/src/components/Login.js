@@ -21,7 +21,13 @@ const Login = () => {
     e.preventDefault();
     try {
       const user = await login(email, password);
-      navigate(user.role === 'logistician' ? '/logistician' : '/buyer');
+      navigate(
+        user.role === 'logistician'
+          ? '/logistician'
+          : user.role === 'admin'
+          ? '/admin'
+          : '/buyer'
+      );
     } catch (error) {
       setError(error.message);
     }
