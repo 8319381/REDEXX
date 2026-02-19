@@ -54,7 +54,7 @@ export function AuthProvider({ children }) {
     return data?.user || null;
   };
 
-  const register = async (data) => {
+  const register = async (payload) => {
     const {
       firstName,
       lastName,
@@ -64,7 +64,7 @@ export function AuthProvider({ children }) {
       password,
       confirmPassword,
       role,
-    } = data;
+    } = payload;
     const res = await fetch("/api/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
