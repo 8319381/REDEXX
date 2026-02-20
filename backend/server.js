@@ -129,6 +129,7 @@ function validatePassword(password) {
 }
 
 const DADATA_URL = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party';
+const DADATA_ADDRESS_URL = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
 
 async function validateInnWithDaData(inn) {
   const apiKey = process.env.DADATA_API_KEY;
@@ -161,6 +162,68 @@ async function validateInnWithDaData(inn) {
   } catch (e) {
     console.error('DaData error', e.message);
     return { valid: false, companyName: null };
+  }
+}
+
+// Валидация адреса/города через DaData
+async function validateLocationWithDaData(query) {
+  const apiKey = process.env.DADATA_API_KEY;
+  if (!apiKey) {
+    // Если нет ключа, проверяем в БД
+    return await validateLocationInDB(query);
+  }
+  const trimmed = String(query || '').trim();
+  if (!trimmed) return { valid: false, suggestions: [] };
+  try {
+    const response = await fetch(DADATA_ADDRESS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Token ${apiKey}`,
+      },
+      body: JSON.stringify({ query: trimmed, count: 10 }),
+    });
+    if (!response.ok) {
+      // Fallback на БД если DaData недоступен
+      return await validateLocationInDB(query);
+    }
+    const data = await response.json();
+    const suggestions = (data.suggestions || []).map(s => ({
+      value: s.value,
+      city: s.data?.city || s.data?.settlement || '',
+      region: s.data?.region || '',
+      country: s.data?.country || '',
+    }));
+    return { valid: suggestions.length > 0, suggestions };
+  } catch (e) {
+    console.error('DaData address error', e.message);
+    // Fallback на БД
+    return await validateLocationInDB(query);
+  }
+}
+
+// Валидация локации в БД
+async function validateLocationInDB(query) {
+  try {
+    const trimmed = String(query || '').trim();
+    if (!trimmed) return { valid: false, suggestions: [] };
+    const result = await db.query(
+      `SELECT name, type, country, region FROM locations 
+       WHERE LOWER(name) LIKE LOWER($1) || '%' 
+       ORDER BY name LIMIT 10`,
+      [`%${trimmed}%`]
+    );
+    const suggestions = result.rows.map(row => ({
+      value: row.name,
+      city: row.name,
+      region: row.region || '',
+      country: row.country || '',
+    }));
+    return { valid: suggestions.length > 0, suggestions };
+  } catch (e) {
+    console.error('DB location validation error', e.message);
+    return { valid: false, suggestions: [] };
   }
 }
 
@@ -397,7 +460,273 @@ app.get('/api/bets', authenticateToken, async (req, res) => {
 
 // Available routes and container types
 app.get('/api/routes', (req, res) => res.json(routes));
-app.get('/api/container-types', (req, res) => res.json(containerTypes));
+app.get('/api/container-types', async (req, res) => {
+  try {
+    const result = await db.query('SELECT code, name, description FROM container_types ORDER BY code');
+    if (result.rowCount > 0) {
+      res.json(result.rows);
+    } else {
+      // Fallback на статический список если БД пустая
+      res.json(containerTypes.map(ct => ({ code: ct, name: ct })));
+    }
+  } catch (e) {
+    console.error('container-types error', e);
+    // Fallback на статический список при ошибке
+    res.json(containerTypes.map(ct => ({ code: ct, name: ct })));
+  }
+});
+
+// Валидация локации (города/порта/пункта)
+app.get('/api/validate-location', async (req, res) => {
+  try {
+    const query = req.query.q;
+    if (!query || !String(query).trim()) {
+      return res.json({ valid: false, suggestions: [] });
+    }
+    const result = await validateLocationWithDaData(query);
+    res.json(result);
+  } catch (e) {
+    console.error('validate-location error', e);
+    res.status(500).json({ valid: false, suggestions: [] });
+  }
+});
+
+// Справочники
+app.get('/api/incoterms', async (req, res) => {
+  try {
+    const result = await db.query('SELECT code, name, description FROM incoterms ORDER BY code');
+    res.json(result.rows);
+  } catch (e) {
+    console.error('incoterms error', e);
+    res.status(500).json({ message: 'Error loading incoterms' });
+  }
+});
+
+app.get('/api/cargo-types', async (req, res) => {
+  try {
+    const result = await db.query('SELECT code, name FROM cargo_types ORDER BY code');
+    res.json(result.rows);
+  } catch (e) {
+    console.error('cargo-types error', e);
+    res.status(500).json({ message: 'Error loading cargo types' });
+  }
+});
+
+app.get('/api/transport-types', async (req, res) => {
+  try {
+    const result = await db.query('SELECT code, name FROM transport_types ORDER BY code');
+    res.json(result.rows);
+  } catch (e) {
+    console.error('transport-types error', e);
+    res.status(500).json({ message: 'Error loading transport types' });
+  }
+});
+
+// CRUD для заявок на перевозку
+// GET /api/requests - получить все заявки пользователя
+app.get('/api/requests', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT r.*, 
+              ct.name as container_type_name,
+              i.name as incoterm_name,
+              cg.name as cargo_type_name,
+              tt.name as transport_type_name
+       FROM requests r
+       LEFT JOIN container_types ct ON r.container_type_code = ct.code
+       LEFT JOIN incoterms i ON r.incoterm_code = i.code
+       LEFT JOIN cargo_types cg ON r.cargo_type_code = cg.code
+       LEFT JOIN transport_types tt ON r.preferred_transport_code = tt.code
+       WHERE r.user_id = $1
+       ORDER BY r.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('requests get error', e);
+    res.status(500).json({ message: 'Ошибка при загрузке заявок' });
+  }
+});
+
+// GET /api/requests/:id - получить одну заявку
+app.get('/api/requests/:id', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT r.*, 
+              ct.name as container_type_name,
+              i.name as incoterm_name,
+              cg.name as cargo_type_name,
+              tt.name as transport_type_name
+       FROM requests r
+       LEFT JOIN container_types ct ON r.container_type_code = ct.code
+       LEFT JOIN incoterms i ON r.incoterm_code = i.code
+       LEFT JOIN cargo_types cg ON r.cargo_type_code = cg.code
+       LEFT JOIN transport_types tt ON r.preferred_transport_code = tt.code
+       WHERE r.id = $1 AND r.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Заявка не найдена' });
+    }
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('request get error', e);
+    res.status(500).json({ message: 'Ошибка при загрузке заявки' });
+  }
+});
+
+// POST /api/requests - создать заявку
+app.post('/api/requests', authenticateToken, async (req, res) => {
+  try {
+    const {
+      cargo_ready_date,
+      origin_location,
+      destination_location,
+      container_type_code,
+      incoterm_code,
+      cargo_weight,
+      cargo_volume,
+      cargo_type_code,
+      desired_delivery_days,
+      preferred_transport_code,
+      cargo_value,
+      comment,
+    } = req.body;
+
+    // Валидация обязательных полей
+    if (!cargo_ready_date || !origin_location || !destination_location || 
+        !container_type_code || !incoterm_code) {
+      return res.status(400).json({ 
+        message: 'Обязательны: дата готовности груза, пункт отправки, пункт назначения, тип контейнера, Инкотермс' 
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO requests (
+        user_id, cargo_ready_date, origin_location, destination_location,
+        container_type_code, incoterm_code, cargo_weight,
+        cargo_volume, cargo_type_code, desired_delivery_days,
+        preferred_transport_code, cargo_value, comment
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING *`,
+      [
+        req.user.id,
+        cargo_ready_date,
+        origin_location.trim(),
+        destination_location.trim(),
+        container_type_code,
+        incoterm_code,
+        cargo_weight || null,
+        cargo_volume || null,
+        cargo_type_code || null,
+        desired_delivery_days || null,
+        preferred_transport_code || null,
+        cargo_value || null,
+        comment || null,
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error('request post error', e);
+    if (e.code === '23503') { // Foreign key violation
+      return res.status(400).json({ message: 'Некорректное значение справочника' });
+    }
+    res.status(500).json({ message: 'Ошибка при создании заявки' });
+  }
+});
+
+// PUT /api/requests/:id - обновить заявку
+app.put('/api/requests/:id', authenticateToken, async (req, res) => {
+  try {
+    const {
+      cargo_ready_date,
+      origin_location,
+      destination_location,
+      container_type_code,
+      incoterm_code,
+      cargo_weight,
+      cargo_volume,
+      cargo_type_code,
+      desired_delivery_days,
+      preferred_transport_code,
+      cargo_value,
+      comment,
+      status,
+    } = req.body;
+
+    // Проверяем, что заявка принадлежит пользователю
+    const checkResult = await db.query(
+      'SELECT id FROM requests WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (checkResult.rowCount === 0) {
+      return res.status(404).json({ message: 'Заявка не найдена' });
+    }
+
+    const result = await db.query(
+      `UPDATE requests SET
+        cargo_ready_date = COALESCE($1, cargo_ready_date),
+        origin_location = COALESCE($2, origin_location),
+        destination_location = COALESCE($3, destination_location),
+        container_type_code = COALESCE($4, container_type_code),
+        incoterm_code = COALESCE($5, incoterm_code),
+        cargo_weight = $6,
+        cargo_volume = $7,
+        cargo_type_code = $8,
+        desired_delivery_days = $9,
+        preferred_transport_code = $10,
+        cargo_value = $11,
+        comment = $12,
+        status = COALESCE($13, status),
+        updated_at = NOW()
+      WHERE id = $14 AND user_id = $15
+      RETURNING *`,
+      [
+        cargo_ready_date,
+        origin_location ? origin_location.trim() : null,
+        destination_location ? destination_location.trim() : null,
+        container_type_code,
+        incoterm_code,
+        cargo_weight || null,
+        cargo_volume || null,
+        cargo_type_code || null,
+        desired_delivery_days || null,
+        preferred_transport_code || null,
+        cargo_value || null,
+        comment || null,
+        status,
+        req.params.id,
+        req.user.id,
+      ]
+    );
+
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('request put error', e);
+    if (e.code === '23503') {
+      return res.status(400).json({ message: 'Некорректное значение справочника' });
+    }
+    res.status(500).json({ message: 'Ошибка при обновлении заявки' });
+  }
+});
+
+// DELETE /api/requests/:id - удалить заявку
+app.delete('/api/requests/:id', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      'DELETE FROM requests WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Заявка не найдена' });
+    }
+    res.json({ message: 'Заявка удалена', id: result.rows[0].id });
+  } catch (e) {
+    console.error('request delete error', e);
+    res.status(500).json({ message: 'Ошибка при удалении заявки' });
+  }
+});
 
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
