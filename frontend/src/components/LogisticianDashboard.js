@@ -188,6 +188,20 @@ const LogisticianDashboard = () => {
       setRoutes(response.data);
     } catch (error) {
       setError('Ошибка при загрузке маршрутов');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          runId:'initial',
+          hypothesisId:'H7',
+          location:'LogisticianDashboard.js:185',
+          message:'fetchRoutes error',
+          data:{name:error.name,message:error.message},
+          timestamp:Date.now()
+        })
+      }).catch(()=>{});
+      // #endregion
     }
   };
 
@@ -222,6 +236,26 @@ const LogisticianDashboard = () => {
       setDeliveryDays('');
     } catch (error) {
       setError('Ошибка при создании ставки');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          runId:'initial',
+          hypothesisId:'H8',
+          location:'LogisticianDashboard.js:210',
+          message:'handleSubmit /api/bets error',
+          data:{
+            route:selectedRoute,
+            cost,
+            deliveryDays,
+            responseStatus:error.response?.status||null,
+            responseMessage:error.response?.data?.message||null
+          },
+          timestamp:Date.now()
+        })
+      }).catch(()=>{});
+      // #endregion
     }
   };
 

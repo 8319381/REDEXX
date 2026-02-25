@@ -137,6 +137,25 @@ const BuyerDashboard = () => {
     } catch (err) {
       console.error('Error fetching requests:', err);
       setError('Ошибка при загрузке заявок');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          runId:'initial',
+          hypothesisId:'H9',
+          location:'BuyerDashboard.js:132',
+          message:'GET /api/requests error',
+          data:{
+            name:err.name,
+            message:err.message,
+            responseStatus:err.response?.status||null,
+            responseMessage:err.response?.data?.message||null
+          },
+          timestamp:Date.now()
+        })
+      }).catch(()=>{});
+      // #endregion
     } finally {
       setLoading(false);
     }
@@ -216,6 +235,28 @@ const BuyerDashboard = () => {
         comment: comment || null,
       };
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          runId:'initial',
+          hypothesisId:'H10',
+          location:'BuyerDashboard.js:204',
+          message: editingRequest ? 'PUT /api/requests payload' : 'POST /api/requests payload',
+          data:{
+            hasEditingRequest:!!editingRequest,
+            cargo_ready_date:cargoReadyDate,
+            origin_location:originLocation,
+            destination_location:destinationLocation,
+            container_type_code:containerTypeCode,
+            incoterm_code:incotermCode
+          },
+          timestamp:Date.now()
+        })
+      }).catch(()=>{});
+      // #endregion
+
       if (editingRequest) {
         await axios.put(`/api/requests/${editingRequest.id}`, requestData);
         setSuccess('Заявка успешно обновлена');
@@ -238,6 +279,25 @@ const BuyerDashboard = () => {
     } catch (err) {
       console.error('Error saving request:', err);
       setError(err.response?.data?.message || 'Ошибка при сохранении заявки');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          runId:'initial',
+          hypothesisId:'H11',
+          location:'BuyerDashboard.js:238',
+          message:'Error saving request',
+          data:{
+            name:err.name,
+            message:err.message,
+            responseStatus:err.response?.status||null,
+            responseMessage:err.response?.data?.message||null
+          },
+          timestamp:Date.now()
+        })
+      }).catch(()=>{});
+      // #endregion
     }
   };
 
