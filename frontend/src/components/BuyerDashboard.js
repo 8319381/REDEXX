@@ -47,7 +47,6 @@ const BuyerDashboard = () => {
   // Состояния поиска маршрутов и доступных ставок
   const [routes, setRoutes] = useState([]);
   const [allBets, setAllBets] = useState([]);
-  const [filteredBets, setFilteredBets] = useState([]);
   const [searchOrigin, setSearchOrigin] = useState('');
   const [searchDestination, setSearchDestination] = useState('');
   const [searchContainerType, setSearchContainerType] = useState('');
@@ -118,11 +117,20 @@ const BuyerDashboard = () => {
         setIncoterms(incotermRes.data || []);
         setCargoTypes(cargoRes.data || []);
         setTransportTypes(transportRes.data || []);
-        setRoutes(routesRes.data || []);
+        const routesData = routesRes.data || [];
+        setRoutes(routesData);
 
         const betsData = (betsRes.data || []).filter(bet => !bet.isCounterBid);
         setAllBets(betsData);
-        setFilteredBets(betsData);
+
+        // Значения по умолчанию для быстрых полей поиска
+        if (routesData.length > 0) {
+          setSearchOrigin(routesData[0].from);
+          setSearchDestination(routesData[0].to);
+        }
+        if (containerTypesData.length > 0) {
+          setSearchContainerType(containerTypesData[0].code);
+        }
         
         if (containerTypesData.length > 0) {
           setContainerTypeCode(containerTypesData[0].code);
@@ -284,36 +292,47 @@ const BuyerDashboard = () => {
 
   // Поиск маршрутов по ставкам логистов
   const handleSearchRoutes = () => {
-    try {
-      const origin = searchOrigin;
-      const destination = searchDestination;
-      const container = searchContainerType;
-      const departure = searchDepartureDate;
+    setError('');
+    setSuccess('');
 
-      let result = [...allBets];
-
-      if (origin) {
-        result = result.filter(bet =>
-          typeof bet.route === 'string' &&
-          bet.route.toLowerCase().includes(origin.toLowerCase())
-        );
-      }
-
-      if (destination) {
-        result = result.filter(bet =>
-          typeof bet.route === 'string' &&
-          bet.route.toLowerCase().includes(destination.toLowerCase())
-        );
-      }
-
-      // На текущем MVP контейнер и дата выхода в ставке не хранятся,
-      // поэтому фильтры по container/departure пока не применяются,
-      // но состояние сохраняем для будущего расширения.
-      setFilteredBets(result);
-    } catch (e) {
-      console.error('Route search error', e);
-      setError('Ошибка при поиске маршрутов');
+    // быстрая форма фактически создаёт ЗАЯВКУ (request)
+    if (!searchOrigin || !searchDestination || !searchContainerType || !searchDepartureDate) {
+      setError('Заполните место отправки, место доставки, оборудование и дату выхода');
+      return;
     }
+
+    // Для быстрого сценария используем первый доступный Инкотермс
+    const defaultIncoterm = incoterms.length > 0 ? incoterms[0].code : null;
+    if (!defaultIncoterm) {
+      setError('Справочник Инкотермс не загружен, повторите попытку позже');
+      return;
+    }
+
+    const requestData = {
+      cargo_ready_date: searchDepartureDate,
+      origin_location: searchOrigin,
+      destination_location: searchDestination,
+      container_type_code: searchContainerType,
+      incoterm_code: defaultIncoterm,
+      cargo_weight: null,
+      cargo_volume: null,
+      cargo_type_code: null,
+      desired_delivery_days: null,
+      preferred_transport_code: null,
+      cargo_value: null,
+      comment: null,
+    };
+
+    axios
+      .post('/api/requests', requestData)
+      .then(() => {
+        setSuccess('Заявка успешно создана');
+        fetchRequests();
+      })
+      .catch((err) => {
+        console.error('Quick request create error:', err);
+        setError(err.response?.data?.message || 'Ошибка при создании заявки');
+      });
   };
 
   return (
@@ -446,7 +465,7 @@ const BuyerDashboard = () => {
           />
         </Box>
 
-        {filteredBets.length === 0 ? (
+        {allBets.length === 0 ? (
           <Typography color="text.secondary">
             Пока нет доступных ставок по выбранным параметрам.
           </Typography>
@@ -464,7 +483,7 @@ const BuyerDashboard = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredBets
+                {allBets
                   .filter(bet =>
                     !routeFilterText ||
                     (bet.route && bet.route.toLowerCase().includes(routeFilterText.toLowerCase()))
