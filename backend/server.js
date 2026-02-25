@@ -397,31 +397,6 @@ app.get('/api/me', authenticateToken, async (req, res) => {
 app.post('/api/bets', authenticateToken, async (req, res) => {
   try {
     const { route, transportType, cost, deliveryDays, isCounterBid, originalBetId } = req.body;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H1',
-        location:'server.js:396',
-        message:'POST /api/bets received payload',
-        data:{
-          userId:req.user?.id,
-          userRole:req.user?.role,
-          route,
-          transportType,
-          cost,
-          deliveryDays,
-          isCounterBid:!!isCounterBid,
-          originalBetId:originalBetId||null
-        },
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
-
     const bet = {
       userId: String(req.user.id),
       userEmail: req.user.email,
@@ -442,38 +417,9 @@ app.post('/api/bets', authenticateToken, async (req, res) => {
       [betId, JSON.stringify(bet)]
     );
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H2',
-        location:'server.js:416',
-        message:'POST /api/bets inserted bet',
-        data:{betId, userId:req.user?.id},
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
-
     res.json({ bet_id: betId, data: bet, created_at: bet.createdAt });
   } catch (e) {
     console.error('bets post error', e);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H3',
-        location:'server.js:423',
-        message:'POST /api/bets error',
-        data:{name:e.name,message:e.message,code:e.code},
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
     res.status(500).json({ 
       message: 'Error creating bet', 
       code: e.code || null,
@@ -495,21 +441,6 @@ app.get('/api/bets', authenticateToken, async (req, res) => {
       created_at: row.created_at,
     }));
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H4',
-        location:'server.js:435',
-        message:'GET /api/bets loaded from DB',
-        data:{count:all.length,userRole:req.user?.role},
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
-
     let userBets;
     if (req.user.role === 'logistician') {
       userBets = all.filter(b =>
@@ -523,38 +454,9 @@ app.get('/api/bets', authenticateToken, async (req, res) => {
       );
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H5',
-        location:'server.js:454',
-        message:'GET /api/bets filtered for user',
-        data:{resultCount:userBets.length,userRole:req.user?.role,userId:req.user?.id},
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
-
     res.json(userBets);
   } catch (e) {
     console.error('bets get error', e);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        runId:'initial',
-        hypothesisId:'H6',
-        location:'server.js:456',
-        message:'GET /api/bets error',
-        data:{name:e.name,message:e.message,code:e.code},
-        timestamp:Date.now()
-      })
-    }).catch(()=>{});
-    // #endregion
     res.status(500).json({ message: 'Error loading bets' });
   }
 });
