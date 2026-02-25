@@ -44,6 +44,17 @@ const BuyerDashboard = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
+  // Состояния поиска маршрутов и доступных ставок
+  const [routes, setRoutes] = useState([]);
+  const [allBets, setAllBets] = useState([]);
+  const [filteredBets, setFilteredBets] = useState([]);
+  const [searchOrigin, setSearchOrigin] = useState('');
+  const [searchDestination, setSearchDestination] = useState('');
+  const [searchContainerType, setSearchContainerType] = useState('');
+  const [searchDepartureDate, setSearchDepartureDate] = useState('');
+  const [routeFilterText, setRouteFilterText] = useState('');
+  const [showSearchPanel, setShowSearchPanel] = useState(true);
+
   // Состояния для формы заявки
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [editingRequest, setEditingRequest] = useState(null);
@@ -77,13 +88,22 @@ const BuyerDashboard = () => {
 
   // Загрузка справочников
   useEffect(() => {
-    const loadDictionaries = async () => {
+    const loadDictionariesAndData = async () => {
       try {
-        const [containerRes, incotermRes, cargoRes, transportRes] = await Promise.all([
+        const [
+          containerRes,
+          incotermRes,
+          cargoRes,
+          transportRes,
+          routesRes,
+          betsRes,
+        ] = await Promise.all([
           axios.get('/api/container-types'),
           axios.get('/api/incoterms'),
           axios.get('/api/cargo-types'),
           axios.get('/api/transport-types'),
+          axios.get('/api/routes'),
+          axios.get('/api/bets'),
         ]);
         
         // Обработка типов контейнеров (может быть массив объектов или строк)
@@ -98,6 +118,11 @@ const BuyerDashboard = () => {
         setIncoterms(incotermRes.data || []);
         setCargoTypes(cargoRes.data || []);
         setTransportTypes(transportRes.data || []);
+        setRoutes(routesRes.data || []);
+
+        const betsData = (betsRes.data || []).filter(bet => !bet.isCounterBid);
+        setAllBets(betsData);
+        setFilteredBets(betsData);
         
         if (containerTypesData.length > 0) {
           setContainerTypeCode(containerTypesData[0].code);
@@ -108,7 +133,7 @@ const BuyerDashboard = () => {
       }
     };
     
-    loadDictionaries();
+    loadDictionariesAndData();
     fetchRequests();
   }, []);
 
@@ -137,25 +162,6 @@ const BuyerDashboard = () => {
     } catch (err) {
       console.error('Error fetching requests:', err);
       setError('Ошибка при загрузке заявок');
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          runId:'initial',
-          hypothesisId:'H9',
-          location:'BuyerDashboard.js:132',
-          message:'GET /api/requests error',
-          data:{
-            name:err.name,
-            message:err.message,
-            responseStatus:err.response?.status||null,
-            responseMessage:err.response?.data?.message||null
-          },
-          timestamp:Date.now()
-        })
-      }).catch(()=>{});
-      // #endregion
     } finally {
       setLoading(false);
     }
@@ -235,28 +241,6 @@ const BuyerDashboard = () => {
         comment: comment || null,
       };
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          runId:'initial',
-          hypothesisId:'H10',
-          location:'BuyerDashboard.js:204',
-          message: editingRequest ? 'PUT /api/requests payload' : 'POST /api/requests payload',
-          data:{
-            hasEditingRequest:!!editingRequest,
-            cargo_ready_date:cargoReadyDate,
-            origin_location:originLocation,
-            destination_location:destinationLocation,
-            container_type_code:containerTypeCode,
-            incoterm_code:incotermCode
-          },
-          timestamp:Date.now()
-        })
-      }).catch(()=>{});
-      // #endregion
-
       if (editingRequest) {
         await axios.put(`/api/requests/${editingRequest.id}`, requestData);
         setSuccess('Заявка успешно обновлена');
@@ -279,25 +263,6 @@ const BuyerDashboard = () => {
     } catch (err) {
       console.error('Error saving request:', err);
       setError(err.response?.data?.message || 'Ошибка при сохранении заявки');
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/be7a3e2f-42d0-4b31-b834-acdb399d6ea7',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          runId:'initial',
-          hypothesisId:'H11',
-          location:'BuyerDashboard.js:238',
-          message:'Error saving request',
-          data:{
-            name:err.name,
-            message:err.message,
-            responseStatus:err.response?.status||null,
-            responseMessage:err.response?.data?.message||null
-          },
-          timestamp:Date.now()
-        })
-      }).catch(()=>{});
-      // #endregion
     }
   };
 
@@ -314,6 +279,40 @@ const BuyerDashboard = () => {
     } catch (err) {
       console.error('Error deleting request:', err);
       setError('Ошибка при удалении заявки');
+    }
+  };
+
+  // Поиск маршрутов по ставкам логистов
+  const handleSearchRoutes = () => {
+    try {
+      const origin = searchOrigin;
+      const destination = searchDestination;
+      const container = searchContainerType;
+      const departure = searchDepartureDate;
+
+      let result = [...allBets];
+
+      if (origin) {
+        result = result.filter(bet =>
+          typeof bet.route === 'string' &&
+          bet.route.toLowerCase().includes(origin.toLowerCase())
+        );
+      }
+
+      if (destination) {
+        result = result.filter(bet =>
+          typeof bet.route === 'string' &&
+          bet.route.toLowerCase().includes(destination.toLowerCase())
+        );
+      }
+
+      // На текущем MVP контейнер и дата выхода в ставке не хранятся,
+      // поэтому фильтры по container/departure пока не применяются,
+      // но состояние сохраняем для будущего расширения.
+      setFilteredBets(result);
+    } catch (e) {
+      console.error('Route search error', e);
+      setError('Ошибка при поиске маршрутов');
     }
   };
 
@@ -344,6 +343,158 @@ const BuyerDashboard = () => {
           {success}
         </Alert>
       )}
+
+      {/* Поиск маршрутов */}
+      <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Поиск маршрутов</Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => setShowSearchPanel(!showSearchPanel)}
+          >
+            {showSearchPanel ? 'Скрыть' : 'Показать'}
+          </Button>
+        </Box>
+
+        <Collapse in={showSearchPanel}>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Место отправки</InputLabel>
+                <Select
+                  value={searchOrigin}
+                  label="Место отправки"
+                  onChange={(e) => setSearchOrigin(e.target.value)}
+                >
+                  {Array.from(new Set(routes.map(r => r.from))).map(city => (
+                    <MenuItem key={city} value={city}>
+                      {city}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Место доставки</InputLabel>
+                <Select
+                  value={searchDestination}
+                  label="Место доставки"
+                  onChange={(e) => setSearchDestination(e.target.value)}
+                >
+                  {Array.from(new Set(routes.map(r => r.to))).map(city => (
+                    <MenuItem key={city} value={city}>
+                      {city}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={2}>
+              <FormControl fullWidth>
+                <InputLabel>Обор.</InputLabel>
+                <Select
+                  value={searchContainerType}
+                  label="Обор."
+                  onChange={(e) => setSearchContainerType(e.target.value)}
+                >
+                  {containerTypes.map(type => (
+                    <MenuItem key={type.code} value={type.code}>
+                      {type.name || type.code}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={2}>
+              <TextField
+                label="Дата выхода"
+                type="date"
+                value={searchDepartureDate}
+                onChange={(e) => setSearchDepartureDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} md={2}>
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
+                onClick={handleSearchRoutes}
+              >
+                Найти маршруты
+              </Button>
+            </Grid>
+          </Grid>
+        </Collapse>
+      </Paper>
+
+      {/* Доступные ставки */}
+      <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Доступные ставки
+        </Typography>
+
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            fullWidth
+            label="Фильтр по маршруту"
+            value={routeFilterText}
+            onChange={(e) => setRouteFilterText(e.target.value)}
+          />
+        </Box>
+
+        {filteredBets.length === 0 ? (
+          <Typography color="text.secondary">
+            Пока нет доступных ставок по выбранным параметрам.
+          </Typography>
+        ) : (
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Маршрут</TableCell>
+                  <TableCell>Тип транспорта</TableCell>
+                  <TableCell>Стоимость (руб.)</TableCell>
+                  <TableCell>Срок доставки (дней)</TableCell>
+                  <TableCell>Дата создания</TableCell>
+                  <TableCell>Действия</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredBets
+                  .filter(bet =>
+                    !routeFilterText ||
+                    (bet.route && bet.route.toLowerCase().includes(routeFilterText.toLowerCase()))
+                  )
+                  .map(bet => (
+                    <TableRow key={bet.id}>
+                      <TableCell>{bet.route}</TableCell>
+                      <TableCell>
+                        {bet.transportType === 'train' ? 'Ж/Д' : bet.transportType || '-'}
+                      </TableCell>
+                      <TableCell>{bet.cost ?? '-'}</TableCell>
+                      <TableCell>{bet.deliveryDays ?? '-'}</TableCell>
+                      <TableCell>
+                        {bet.createdAt
+                          ? new Date(bet.createdAt).toLocaleDateString('ru-RU')
+                          : bet.created_at
+                          ? new Date(bet.created_at).toLocaleDateString('ru-RU')
+                          : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {/* В будущем здесь можно сделать кнопку "Сделать встречное предложение" */}
+                        —
+                      </TableCell>
+                    </TableRow>
+                  ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
 
       {/* Форма создания заявки */}
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
