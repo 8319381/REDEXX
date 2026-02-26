@@ -339,7 +339,7 @@ const BuyerDashboard = () => {
     <Container>
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Панель покупателя проверка отображения на сайте
+          Панель заказчика
         </Typography>
         <Button
           variant="outlined"
