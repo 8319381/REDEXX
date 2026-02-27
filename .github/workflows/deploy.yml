@@ -14,10 +14,10 @@ jobs:
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
-       with:
-  host: 217.114.0.214
-  username: friend
-  key: ${{ secrets.VPS_SSH_KEY }}
-  port: 22
-  script: |
-    /usr/local/bin/deploy_redexx_ci
+        with:
+          host: 217.114.0.214
+          username: friend
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            /usr/local/bin/deploy_redexx_ci
