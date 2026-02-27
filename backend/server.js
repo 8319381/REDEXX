@@ -731,6 +731,174 @@ app.delete('/api/requests/:id', authenticateToken, async (req, res) => {
   }
 });
 
+  /* NEGOTIATIONS ROUTES v1 */
+  // Negotiations (full chain) — endpoints
+  // Tables: public.negotiations, public.counter_offers
+
+  const ensureRole = (roles) => (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) return res.sendStatus(403);
+    next();
+  };
+
+  const mustBeParticipant = async (negId, userId) => {
+    const r = await db.query(
+      "select id, base_bet_id, buyer_user_id, logistician_user_id, status, created_at, updated_at from negotiations where id=$1",
+      [negId]
+    );
+    if (r.rowCount === 0) return null;
+    const n = r.rows[0];
+    if (String(n.buyer_user_id) !== String(userId) && String(n.logistician_user_id) !== String(userId)) return null;
+    return n;
+  };
+
+  // Create (or reuse) negotiation + create first offer (buyer initiates)
+  app.post('/api/negotiations', authenticateToken, ensureRole(['buyer']), async (req, res) => {
+    try {
+      const { baseBetId, price, deliveryDays, message } = req.body;
+      if (!baseBetId || price === undefined || deliveryDays === undefined) {
+        return res.status(400).json({ message: 'baseBetId, price, deliveryDays are required' });
+      }
+
+      const b = await db.query('select bet_id, data from bets where bet_id=$1', [baseBetId]);
+      if (b.rowCount === 0) return res.status(404).json({ message: 'Base bet not found' });
+
+      const bet = b.rows[0].data;
+      const betRole = bet?.userRole;
+      const logisticianUserId = bet?.userId;
+
+      if (betRole !== 'logistician' || !logisticianUserId) {
+        return res.status(400).json({ message: 'Base bet must belong to logistician' });
+      }
+
+      const n = await db.query(
+        `insert into negotiations(base_bet_id, buyer_user_id, logistician_user_id)
+         values ($1, $2, $3)
+         on conflict (base_bet_id, buyer_user_id)
+         do update set updated_at=now()
+         returning id, base_bet_id, buyer_user_id, logistician_user_id, status, created_at, updated_at`,
+        [baseBetId, String(req.user.id), String(logisticianUserId)]
+      );
+
+      const neg = n.rows[0];
+      if (neg.status !== 'open') return res.status(409).json({ message: 'Negotiation is not open', status: neg.status });
+
+      const o = await db.query(
+        `insert into counter_offers(negotiation_id, author_user_id, author_role, price, delivery_days, message)
+         values ($1, $2, $3, $4, $5, $6)
+         returning id, negotiation_id, author_user_id, author_role, price, delivery_days, message, created_at`,
+        [neg.id, String(req.user.id), req.user.role, price, deliveryDays, message || null]
+      );
+
+      await db.query('update negotiations set updated_at=now() where id=$1', [neg.id]);
+      res.json({ negotiation: neg, offer: o.rows[0] });
+    } catch (e) {
+      console.error('negotiations create error', e);
+      res.status(500).json({ message: 'Error creating negotiation', error: e.message || String(e) });
+    }
+  });
+
+  // Add offer to existing negotiation (buyer or logistician)
+  app.post('/api/negotiations/:id/offers', authenticateToken, ensureRole(['buyer','logistician']), async (req, res) => {
+    try {
+      const { price, deliveryDays, message } = req.body;
+      if (price === undefined || deliveryDays === undefined) {
+        return res.status(400).json({ message: 'price, deliveryDays are required' });
+      }
+
+      const neg = await mustBeParticipant(req.params.id, req.user.id);
+      if (!neg) return res.sendStatus(404);
+      if (neg.status !== 'open') return res.status(409).json({ message: 'Negotiation is not open', status: neg.status });
+
+      const o = await db.query(
+        `insert into counter_offers(negotiation_id, author_user_id, author_role, price, delivery_days, message)
+         values ($1, $2, $3, $4, $5, $6)
+         returning id, negotiation_id, author_user_id, author_role, price, delivery_days, message, created_at`,
+        [neg.id, String(req.user.id), req.user.role, price, deliveryDays, message || null]
+      );
+
+      await db.query('update negotiations set updated_at=now() where id=$1', [neg.id]);
+      res.json({ offer: o.rows[0] });
+    } catch (e) {
+      console.error('negotiations add offer error', e);
+      res.status(500).json({ message: 'Error adding offer', error: e.message || String(e) });
+    }
+  });
+
+  // List negotiations for current user
+  app.get('/api/negotiations', authenticateToken, ensureRole(['buyer','logistician']), async (req, res) => {
+    try {
+      const uid = String(req.user.id);
+      const r = await db.query(
+        `select n.*,
+          (select row_to_json(o) from (
+            select id, author_user_id, author_role, price, delivery_days, message, created_at
+            from counter_offers where negotiation_id=n.id
+            order by created_at desc limit 1
+          ) o) as last_offer
+         from negotiations n
+         where n.buyer_user_id=$1 or n.logistician_user_id=$1
+         order by n.updated_at desc`,
+        [uid]
+      );
+      res.json(r.rows);
+    } catch (e) {
+      console.error('negotiations list error', e);
+      res.status(500).json({ message: 'Error loading negotiations' });
+    }
+  });
+
+  // Get one negotiation with full offers chain
+  app.get('/api/negotiations/:id', authenticateToken, ensureRole(['buyer','logistician']), async (req, res) => {
+    try {
+      const neg = await mustBeParticipant(req.params.id, req.user.id);
+      if (!neg) return res.sendStatus(404);
+
+      const offers = await db.query(
+        `select id, negotiation_id, author_user_id, author_role, price, delivery_days, message, created_at
+         from counter_offers where negotiation_id=$1
+         order by created_at asc`,
+        [neg.id]
+      );
+
+      res.json({ negotiation: neg, offers: offers.rows });
+    } catch (e) {
+      console.error('negotiations get error', e);
+      res.status(500).json({ message: 'Error loading negotiation' });
+    }
+  });
+
+  // Accept / Reject (logistician only)
+  app.post('/api/negotiations/:id/accept', authenticateToken, ensureRole(['logistician']), async (req, res) => {
+    try {
+      const neg = await mustBeParticipant(req.params.id, req.user.id);
+      if (!neg) return res.sendStatus(404);
+      if (String(neg.logistician_user_id) != String(req.user.id)) return res.sendStatus(403);
+      if (neg.status !== 'open') return res.status(409).json({ message: 'Negotiation is not open', status: neg.status });
+
+      await db.query('update negotiations set status=$2, updated_at=now() where id=$1', [neg.id, 'accepted']);
+      res.json({ ok: true, status: 'accepted' });
+    } catch (e) {
+      console.error('negotiations accept error', e);
+      res.status(500).json({ message: 'Error accepting negotiation' });
+    }
+  });
+
+  app.post('/api/negotiations/:id/reject', authenticateToken, ensureRole(['logistician']), async (req, res) => {
+    try {
+      const neg = await mustBeParticipant(req.params.id, req.user.id);
+      if (!neg) return res.sendStatus(404);
+      if (String(neg.logistician_user_id) != String(req.user.id)) return res.sendStatus(403);
+      if (neg.status !== 'open') return res.status(409).json({ message: 'Negotiation is not open', status: neg.status });
+
+      await db.query('update negotiations set status=$2, updated_at=now() where id=$1', [neg.id, 'rejected']);
+      res.json({ ok: true, status: 'rejected' });
+    } catch (e) {
+      console.error('negotiations reject error', e);
+      res.status(500).json({ message: 'Error rejecting negotiation' });
+    }
+  });
+
+
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
   try {

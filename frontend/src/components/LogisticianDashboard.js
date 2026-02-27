@@ -1,24 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Container,
-  Paper,
-  TextField,
-  Button,
-  Typography,
-  Box,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Collapse,
-  IconButton,
-} from '@mui/material';
+import { Box, Button, Collapse, Container, FormControl, IconButton, InputLabel, MenuItem, Paper, Select, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import axios from 'axios';
@@ -169,7 +150,56 @@ const BetRow = ({ bet, counterBids }) => {
 };
 
 const LogisticianDashboard = () => {
-  const [routes, setRoutes] = useState([]);
+  
+
+  /* NEGOTIATIONS UI v1 */
+  const [negotiations, setNegotiations] = useState([]);
+  const [negMap, setNegMap] = useState({}); // id -> { negotiation, offers }
+  const [negLoading, setNegLoading] = useState(false);
+  const [negError, setNegError] = useState("");
+
+  const fetchNegotiations = async () => {
+    setNegLoading(true);
+    setNegError("");
+    try {
+      const res = await axios.get("/api/negotiations");
+      setNegotiations(res.data || []);
+    } catch (e) {
+      console.error("fetch negotiations error", e);
+      setNegError("Не удалось загрузить переговоры");
+    } finally {
+      setNegLoading(false);
+    }
+  };
+
+  const fetchNegotiationDetails = async (negId) => {
+    try {
+      const res = await axios.get(`/api/negotiations/${negId}`);
+      setNegMap((prev) => ({ ...prev, [negId]: res.data }));
+    } catch (e) {
+      console.error("fetch negotiation details error", e);
+    }
+  };
+
+  const postNegotiationOffer = async (negId, payload) => {
+    await axios.post(`/api/negotiations/${negId}/offers`, payload);
+    await fetchNegotiationDetails(negId);
+    await fetchNegotiations();
+  };
+
+  const acceptNegotiation = async (negId) => {
+    await axios.post(`/api/negotiations/${negId}/accept`);
+    await fetchNegotiationDetails(negId);
+    await fetchNegotiations();
+  };
+
+  const rejectNegotiation = async (negId) => {
+    await axios.post(`/api/negotiations/${negId}/reject`);
+    await fetchNegotiationDetails(negId);
+    await fetchNegotiations();
+  };
+
+const [routes, setRoutes] = useState([]);
   const [bets, setBets] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState('');
   const [cost, setCost] = useState('');
@@ -180,7 +210,8 @@ const LogisticianDashboard = () => {
   useEffect(() => {
     fetchRoutes();
     fetchBets();
-  }, []);
+    fetchNegotiations();
+}, []);
 
   const fetchRoutes = async () => {
     try {
@@ -227,6 +258,90 @@ const LogisticianDashboard = () => {
 
   return (
     <Container>
+
+      {/* Панель переговоров (логист) */}
+      <Paper elevation={2} sx={{ p: 2, mb: 2 }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+          <Typography variant="h6">Переговоры</Typography>
+          <Button variant="outlined" size="small" onClick={fetchNegotiations} disabled={negLoading}>
+            Обновить
+          </Button>
+        </Box>
+
+        {negError && <Typography color="error" sx={{ mt: 1 }}>{negError}</Typography>}
+        {negLoading && <Typography sx={{ mt: 1 }}>Загрузка...</Typography>}
+
+        {!negLoading && negotiations.length === 0 && (
+          <Typography sx={{ mt: 1 }} color="text.secondary">Пока нет переговоров.</Typography>
+        )}
+
+        {!negLoading && negotiations.length > 0 && (
+          <Box sx={{ mt: 1.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+            {negotiations.map((n) => {
+              const details = negMap[n.id];
+              const offers = details?.offers || [];
+              const last = n.last_offer;
+
+              return (
+                <Paper key={n.id} variant="outlined" sx={{ p: 1.5 }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                    <Typography variant="body2">
+                      <b>{n.status}</b> · baseBet: <span style={{ fontFamily: "monospace" }}>{String(n.base_bet_id).slice(0, 8)}…</span>
+                    </Typography>
+
+                    {last && (
+                      <Typography variant="body2" color="text.secondary">
+                        Последнее: <b>{last.author_role}</b> — {last.price} / {last.delivery_days}д
+                      </Typography>
+                    )}
+
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button size="small" variant="outlined" onClick={() => fetchNegotiationDetails(n.id)}>
+                        Открыть
+                      </Button>
+
+                      {n.status === "open" && (
+                        <>
+                          <Button size="small" variant="contained" onClick={() => acceptNegotiation(n.id)}>
+                            Принять
+                          </Button>
+                          <Button size="small" color="error" variant="outlined" onClick={() => rejectNegotiation(n.id)}>
+                            Отклонить
+                          </Button>
+                        </>
+                      )}
+                    </Box>
+                  </Box>
+
+                  {offers.length > 0 && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">История</Typography>
+                      <Box sx={{ mt: 0.5, display: "flex", flexDirection: "column", gap: 0.5 }}>
+                        {offers.map((o) => (
+                          <Box key={o.id} sx={{ p: 0.75, background: "rgba(0,0,0,0.03)", borderRadius: 1 }}>
+                            <Typography variant="body2">
+                              <b>{o.author_role}</b>: {o.price} / {o.delivery_days}д{o.message ? ` — ${o.message}` : ""}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(o.created_at).toLocaleString()}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+
+                  {n.status === "open" && (
+                    <NegotiationReplyForm onSend={(payload) => postNegotiationOffer(n.id, payload)} />
+                  )}
+                </Paper>
+              );
+            })}
+          </Box>
+        )}
+      </Paper>
+
+
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
           Панель логиста
@@ -318,5 +433,59 @@ const LogisticianDashboard = () => {
     </Container>
   );
 };
+
+// Simple reply form for logistician (negotiations)
+const NegotiationReplyForm = ({ onSend }) => {
+  const [price, setPrice] = useState("");
+  const [deliveryDays, setDeliveryDays] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Box sx={{ mt: 1.5, display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+      <TextField
+        size="small"
+        label="Цена"
+        type="number"
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        inputProps={{ min: 0 }}
+      />
+      <TextField
+        size="small"
+        label="Срок (дней)"
+        type="number"
+        value={deliveryDays}
+        onChange={(e) => setDeliveryDays(e.target.value)}
+        inputProps={{ min: 0 }}
+      />
+      <TextField
+        size="small"
+        label="Комментарий"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        sx={{ minWidth: 240, flex: 1 }}
+      />
+      <Button
+        size="small"
+        variant="contained"
+        disabled={busy || price === "" || deliveryDays === ""}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await onSend({ price: Number(price), deliveryDays: Number(deliveryDays), message });
+            setMessage("");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Ответить
+      </Button>
+    </Box>
+  );
+};
+
+
 
 export default LogisticianDashboard;
