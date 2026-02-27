@@ -339,7 +339,7 @@ const BuyerDashboard = () => {
     <Container>
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Панель заказчика <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>проверка 27-02-2026 19:44</span>
+          Панель заказчика <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>проверка 27-02-2026 20:15</span>
         </Typography>
         <Button
           variant="outlined"
