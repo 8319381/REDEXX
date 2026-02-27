@@ -229,7 +229,7 @@ const LogisticianDashboard = () => {
     <Container>
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Панель логиста
+          Панель логиста-экспедитора
         </Typography>
         <Button
           variant="outlined"
