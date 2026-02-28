@@ -237,7 +237,7 @@ const HomePage = () => {
                         Тип:
                       </Typography>
                       <Typography variant="body2">
-                        {offer.containerType}
+                        {typeof offer.containerType === "string" ? offer.containerType : (offer.containerType?.name || offer.containerType?.code || "")}
                       </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
