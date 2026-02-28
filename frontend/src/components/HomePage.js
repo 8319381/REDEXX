@@ -245,7 +245,7 @@ const HomePage = () => {
                         Цена:
                       </Typography>
                       <Typography variant="body1" fontWeight="bold">
-                        {offer.price.toLocaleString()} р
+                        {Number(offer.price || 0).toLocaleString()} р
                       </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
