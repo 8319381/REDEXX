@@ -344,7 +344,7 @@ const [routes, setRoutes] = useState([]);
 
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Панель логиста-экспедитора 1
+          Панель логиста-экспедитора 2
         </Typography>
         <Button
           variant="outlined"
