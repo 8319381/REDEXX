@@ -339,7 +339,7 @@ const BuyerDashboard = () => {
     <Container>
       <Box sx={{ mt: 4, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Панель заказчика <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>AUTO TEST</span> <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>AUTO TEST</span>
+          Панель заказчика <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>AUTO TEST 28-02-2026 19:44</span> <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>AUTO TEST</span> <span style={{ fontSize: 14, color: "#d32f2f", marginLeft: 12 }}>AUTO TEST</span>
         </Typography>
         <Button
           variant="outlined"
