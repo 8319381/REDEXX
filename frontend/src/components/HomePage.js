@@ -89,7 +89,7 @@ const HomePage = () => {
         const containerTypesResponse = await axios.get('/api/container-types');
         setContainerTypes(containerTypesResponse.data);
         if (containerTypesResponse.data.length > 0) {
-          setContainerType(containerTypesResponse.data[0]);
+          setContainerType(containerTypesResponse.data[0]?.code || "");
         }
         
         // Fetch best offers
@@ -182,7 +182,7 @@ const HomePage = () => {
                   onChange={(e) => setContainerType(e.target.value)}
                 >
                   {containerTypes.map((type) => (
-                    <MenuItem key={type} value={type}>{type}</MenuItem>
+                    <MenuItem key={type.code} value={type.code}>{type.name}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
