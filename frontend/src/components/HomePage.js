@@ -94,9 +94,9 @@ const HomePage = () => {
         
         // Fetch best offers (optional endpoint)
           try {
-            const offersResponse = await axios.get('/api/best-offers');
-            setBestOffers(offersResponse.data);
-          } catch (e) {
+          // best-offers disabled
+          setBestOffers([]);
+} catch (e) {
             setBestOffers([]);
           }
       } catch (error) {
