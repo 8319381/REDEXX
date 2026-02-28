@@ -92,9 +92,13 @@ const HomePage = () => {
           setContainerType(containerTypesResponse.data[0]?.code || "");
         }
         
-        // Fetch best offers
-        const offersResponse = await axios.get('/api/best-offers');
-        setBestOffers(offersResponse.data);
+        // Fetch best offers (optional endpoint)
+          try {
+            const offersResponse = await axios.get('/api/best-offers');
+            setBestOffers(offersResponse.data);
+          } catch (e) {
+            setBestOffers([]);
+          }
       } catch (error) {
         console.error('Error fetching data:', error);
       }
