@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
+const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -79,6 +80,22 @@ function clearAuthCookie(res) {
   res.clearCookie(COOKIE_NAME, { path: '/' });
 }
 
+function getMailer() {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 465);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (!host || !user || !pass) return null;
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+}
+
 // Auth middleware: сначала cookie, потом Authorization Bearer (для совместимости)
 function authenticateToken(req, res, next) {
   const cookieToken = req.cookies?.[COOKIE_NAME];
@@ -96,6 +113,13 @@ function authenticateToken(req, res, next) {
     req.user = user;
     next();
   });
+}
+
+// Admin middleware
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.sendStatus(401);
+  if (req.user.role !== 'admin') return res.sendStatus(403);
+  next();
 }
 
 // Health
@@ -242,7 +266,7 @@ app.get('/api/validate-inn', async (req, res) => {
 });
 
 // Register
-const ALLOWED_ROLES = ['buyer', 'logistician', 'admin'];
+const ALLOWED_ROLES = ['buyer', 'logistician']; // admin нельзя выбрать при регистрации
 
 app.post('/api/register', async (req, res) => {
   try {
@@ -897,6 +921,140 @@ app.delete('/api/requests/:id', authenticateToken, async (req, res) => {
       res.status(500).json({ message: 'Error rejecting negotiation' });
     }
   });
+// Admin: list users
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT id, email, role, first_name, last_name, company_name, inn, created_at
+       FROM users
+       ORDER BY id DESC
+       LIMIT 500`
+    );
+    res.json({ users: r.rows });
+  } catch (e) {
+    console.error('admin users error', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// Admin: change role
+app.patch('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { role } = req.body;
+
+    const allowed = ['buyer', 'logistician', 'admin'];
+    if (!allowed.includes(role)) {
+      return res.status(400).json({ error: 'invalid_role' });
+    }
+
+    // запретить самому себе снять admin
+    if (String(req.user.id) === String(userId) && role !== 'admin') {
+      return res.status(400).json({ error: 'cannot_demote_self' });
+    }
+
+    const r = await db.query(
+      `UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role`,
+      [role, userId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
+    res.json({ user: r.rows[0] });
+  } catch (e) {
+    console.error('admin set role error', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+// Forgot password (always ok to prevent enumeration)
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.json({ ok: true });
+
+    const userRes = await db.query(`SELECT id, email FROM users WHERE LOWER(email) = $1 LIMIT 1`, [email]);
+    if (userRes.rowCount === 0) return res.json({ ok: true });
+
+    const user = userRes.rows[0];
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 60 min
+
+    await db.query(
+      `INSERT INTO password_resets (user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3)`,
+      [user.id, tokenHash, expiresAt]
+    );
+
+    const appUrl = (process.env.APP_URL || 'https://mybets1.site').replace(/\/$/, '');
+    const resetUrl = `${appUrl}/reset-password?token=${token}`;
+
+    const mailer = getMailer();
+    if (mailer) {
+      const from = process.env.SMTP_FROM || 'no-reply@mybets1.site';
+      await mailer.sendMail({
+        from,
+        to: user.email,
+        subject: 'Восстановление пароля',
+        text: `Ссылка для смены пароля (действует 60 минут): ${resetUrl}`,
+        html: `<p>Ссылка для смены пароля (действует 60 минут):</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
+      });
+    } else {
+      console.warn('SMTP not configured; reset link:', resetUrl);
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('forgot-password error', e);
+    return res.json({ ok: true });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const newPassword = String(req.body?.password || '');
+    const confirmPassword = String(req.body?.confirmPassword || '');
+
+    if (!token) return res.status(400).json({ error: 'invalid_token' });
+    if (newPassword !== confirmPassword) return res.status(400).json({ error: 'password_mismatch' });
+
+    const v = validatePassword(newPassword);
+    if (!v.ok) return res.status(400).json({ error: 'weak_password', message: v.message });
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const r = await db.query(
+      `SELECT pr.id, pr.user_id
+       FROM password_resets pr
+       WHERE pr.token_hash = $1
+         AND pr.used_at IS NULL
+         AND pr.expires_at > now()
+       ORDER BY pr.id DESC
+       LIMIT 1`,
+      [tokenHash]
+    );
+
+    if (r.rowCount === 0) return res.status(400).json({ error: 'invalid_or_expired' });
+
+    const resetRow = r.rows[0];
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    // IMPORTANT: adjust if your column is password_hash (not password)
+    await db.query(`UPDATE users SET password = $1 WHERE id = $2`, [hash, resetRow.user_id]);
+
+    await db.query(`UPDATE password_resets SET used_at = now() WHERE id = $1`, [resetRow.id]);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('reset-password error', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
+
+
 
 
 app.listen(PORT, async () => {
